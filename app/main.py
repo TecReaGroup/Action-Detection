@@ -325,7 +325,9 @@ class AnnotationWindow(QMainWindow):
         text = bytes(self.training.readAllStandardOutput()).decode("utf-8", errors="replace")
         sys.stdout.write(text)
         sys.stdout.flush()
-        self.training_log.appendPlainText(text.rstrip())
+        training_log = getattr(self, "training_log", None)
+        if training_log is not None and text.strip():
+            training_log.appendPlainText(text.rstrip())
 
     def training_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.read_training_log()
