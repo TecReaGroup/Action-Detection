@@ -12,9 +12,9 @@ from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QImage, QPainter, QColor, QFont
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
-from .model import RECEPTIVE_FIELD, ContinualSTGCN
 from .pose import HandPose
-from .setting import ACTION_THRESHOLD, CHECKPOINT, HAND_EDGES, KEYPOINT_THRESHOLD, ROOT, SAMPLE_FPS
+from .setting import ACTION_THRESHOLD, CLIP_LENGTH, HAND_EDGES, KEYPOINT_THRESHOLD, ROOT, SAMPLE_FPS
+from .temporal import load_temporal_model
 from .train import FEATURE_VERSION
 
 LOGGER = logging.getLogger(__name__)
@@ -40,18 +40,24 @@ class RecognitionThread(QThread):
         camera = None
         try:
             torch.set_num_threads(4)
+            temporal = load_temporal_model()
             network = None
             action = ""
-            if CHECKPOINT.exists():
-                checkpoint = torch.load(CHECKPOINT, map_location="cpu", weights_only=True)
-                if checkpoint.get("version") != 1 or checkpoint.get("feature_version") != FEATURE_VERSION or checkpoint.get("sample_fps") != SAMPLE_FPS:
-                    raise ValueError("Checkpoint preprocessing changed; run training again")
-                network = ContinualSTGCN().eval()
+            if temporal.checkpoint_path.exists():
+                checkpoint = torch.load(temporal.checkpoint_path, map_location="cpu", weights_only=True)
+                expected = {
+                    "version": 2, "feature_version": FEATURE_VERSION,
+                    "sample_fps": SAMPLE_FPS, "clip_length": CLIP_LENGTH,
+                    "temporal_model": temporal.name,
+                }
+                if any(checkpoint.get(key) != value for key, value in expected.items()):
+                    raise ValueError("Checkpoint model or preprocessing changed; run training again")
+                network = temporal.network_type().eval()
                 network.load_state_dict(checkpoint["state_dict"])
                 action = checkpoint["action"]
-                LOGGER.info("Loaded action model: %s", CHECKPOINT)
+                LOGGER.info("Loaded action model: %s", temporal.checkpoint_path)
             else:
-                LOGGER.warning("No trained model; preview will show skeleton only")
+                LOGGER.warning("No weights for %s; run make train. Skeleton preview only.", temporal.name)
             self.status.emit("正在加载手部骨架模型…")
             pose = HandPose()
             if self.isInterruptionRequested():
@@ -99,10 +105,12 @@ class RecognitionThread(QThread):
                             probability = 0.0
                             label = "未检测到清晰手部"
                         else:
-                            score = network.forward_step(torch.from_numpy(features).unsqueeze(0)).sigmoid().item()
+                            logit = network.forward_step(torch.from_numpy(features).unsqueeze(0))
                             steps += 1
-                            probability = score if steps == 1 else 0.7 * probability + 0.3 * score
-                            label = "正在收集动作…" if steps < RECEPTIVE_FIELD else (
+                            if logit is not None:
+                                score = logit.sigmoid().item()
+                                probability = score if steps <= network.warmup_frames else 0.7 * probability + 0.3 * score
+                            label = "正在收集动作…" if steps < network.warmup_frames else (
                                 action if probability >= ACTION_THRESHOLD else "未识别到目标动作"
                             )
                     for first, second in HAND_EDGES:
@@ -114,7 +122,7 @@ class RecognitionThread(QThread):
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format.Format_RGB888).copy()
                     caption = label
-                    if network is not None and steps >= RECEPTIVE_FIELD:
+                    if network is not None and steps >= network.warmup_frames:
                         caption += f"\n{action}置信度：{probability:.1%}"
                     with self.lock:
                         self.latest = (image, caption)

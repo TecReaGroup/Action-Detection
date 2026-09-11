@@ -1,0 +1,13 @@
+[pose]
+# Options: "cpu", "cuda"
+device = "cuda"
+# Options: "lightweight", "balanced", "performance"
+model_size = "balanced"
+
+[temporal]
+# Options: ["continual_stgcn", "skeleton_agent_mstcn"]
+model = "skeleton_agent_mstcn"
+
+[train]
+# Options: positive integers (>= 1)
+epochs = 40

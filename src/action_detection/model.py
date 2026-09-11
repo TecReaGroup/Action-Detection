@@ -66,6 +66,12 @@ class GraphTemporalBlock(nn.Module):
 class ContinualSTGCN(nn.Module):
     """Binary thumb-action classifier with constant-memory online inference."""
 
+    warmup_frames = RECEPTIVE_FIELD
+
+    def training_logits(self, sequence: torch.Tensor) -> torch.Tensor:
+        """Exclude incomplete causal receptive fields from supervision."""
+        return self(sequence)[:, RECEPTIVE_FIELD - 1:]
+
     def __init__(self) -> None:
         super().__init__()
         self.block = nn.ModuleList(

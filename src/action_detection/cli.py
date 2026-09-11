@@ -2,8 +2,10 @@
 
 import argparse
 import logging
+import tomllib
 
 from .logging import configure_logging
+from .setting import CONFIG_PATH
 
 DEFAULT_ACTION = "摇摆大拇指"
 
@@ -21,7 +23,7 @@ def main() -> int:
     command = parser.add_subparsers(dest="command", required=True)
     train = command.add_parser("train", help="Train from action videos")
     train.add_argument("--action", default=DEFAULT_ACTION)
-    train.add_argument("--epochs", type=positive_integer, default=40)
+    train.add_argument("--epochs", type=positive_integer, help="Override train.epochs in config")
     train.add_argument("--batch-size", type=positive_integer, default=16)
     preview = command.add_parser("run", help="Open the camera preview")
     preview.add_argument("--camera", type=int, default=0)
@@ -31,7 +33,17 @@ def main() -> int:
         if arguments.command == "train":
             from .train import train_model
 
-            train_model(arguments.action, arguments.epochs, arguments.batch_size)
+            epochs = arguments.epochs
+            if epochs is None:
+                with CONFIG_PATH.open("rb") as stream:
+                    section = tomllib.load(stream).get("train")
+                if not isinstance(section, dict):
+                    raise ValueError(f"Missing [train] section in {CONFIG_PATH}")
+                epochs = section.get("epochs")
+                if type(epochs) is not int or epochs < 1:
+                    raise ValueError("train.epochs must be a positive integer")
+            logging.getLogger(__name__).info("Training epochs=%d", epochs)
+            train_model(arguments.action, epochs, arguments.batch_size)
             return 0
         if arguments.camera < 0:
             parser.error("Camera index must be nonnegative")

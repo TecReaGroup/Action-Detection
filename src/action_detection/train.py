@@ -10,9 +10,9 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .model import RECEPTIVE_FIELD, ContinualSTGCN
 from .pose import HandPose
-from .setting import CHECKPOINT, CLIP_LENGTH, FEATURE_DIR, NEGATIVE_DIR, SAMPLE_FPS, TRAIN_DIR
+from .setting import CLIP_LENGTH, FEATURE_DIR, NEGATIVE_DIR, SAMPLE_FPS, TRAIN_DIR
+from .temporal import load_temporal_model
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
@@ -132,6 +132,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     torch.manual_seed(42)
     np.random.seed(42)
     torch.set_num_threads(4)
+    temporal = load_temporal_model()
     positive_videos = find_videos(TRAIN_DIR / action)
     negative_videos = find_videos(NEGATIVE_DIR)
     FEATURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,7 +151,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     LOGGER.info("Real training clips: positive=%d negative=%d", len(positive_train), len(negative_train))
     LOGGER.info("Holdout: positive=%s (%d clips), negative=%s (%d clips)", positive_video, len(positive_holdout), negative_video, len(negative_holdout))
     loader = DataLoader(TensorDataset(train_x, train_y), batch_size=batch_size, shuffle=True)
-    network = ContinualSTGCN()
+    network = temporal.network_type()
     optimizer = torch.optim.AdamW(network.parameters(), lr=0.001, weight_decay=0.0001)
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor(len(negative_train) / len(positive_train)),
@@ -162,7 +163,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
         total_loss = 0.0
         for clip, target in loader:
             optimizer.zero_grad()
-            logits = network(clip)[:, RECEPTIVE_FIELD - 1:]
+            logits = network.training_logits(clip)
             loss = criterion(logits, target[:, None].expand_as(logits))
             loss.backward()
             nn.utils.clip_grad_norm_(network.parameters(), 5)
@@ -174,7 +175,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
         with torch.inference_mode():
             for start in range(0, len(validation_y), batch_size):
                 target = validation_y[start:start + batch_size]
-                logits = network(validation_x[start:start + batch_size])[:, RECEPTIVE_FIELD - 1:]
+                logits = network.training_logits(validation_x[start:start + batch_size])
                 clip_loss = validation_criterion(logits, target[:, None].expand_as(logits)).mean(1)
                 class_weight = torch.where(
                     target.bool(), 1 / max(len(positive_holdout), 1),
@@ -187,7 +188,8 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
         if (complete_holdout and validation_loss < best_loss) or (not complete_holdout and epoch == epochs - 1):
             best_loss = validation_loss
             checkpoint = {
-                "version": 1, "state_dict": network.state_dict(), "action": action,
+                "version": 2, "state_dict": network.state_dict(), "action": action,
+                "temporal_model": temporal.name, "clip_length": CLIP_LENGTH,
                 "sample_fps": SAMPLE_FPS, "feature_version": FEATURE_VERSION,
                 "synthetic_negative": False,
                 "negative_directory": str(NEGATIVE_DIR),
@@ -196,7 +198,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
                 "complete_holdout": complete_holdout,
                 "checkpoint_selection": "holdout_loss" if complete_holdout else "final_epoch",
             }
-            partial = CHECKPOINT.with_suffix(".partial")
+            partial = temporal.checkpoint_path.with_suffix(".partial")
             torch.save(checkpoint, partial)
-            partial.replace(CHECKPOINT)
-    LOGGER.info("Saved model: %s", CHECKPOINT)
+            partial.replace(temporal.checkpoint_path)
+    LOGGER.info("Saved model: %s", temporal.checkpoint_path)

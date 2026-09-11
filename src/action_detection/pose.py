@@ -2,35 +2,43 @@
 
 import logging
 import shutil
+import tomllib
+import urllib.parse
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import numpy as np
-from rtmlib import RTMPose
+import onnxruntime as ort
+from rtmlib import RTMPose, Wholebody
 
-from .setting import HAND_JOINT_COUNT, KEYPOINT_THRESHOLD, LEFT_HAND_START, MODEL_DIR, ROOT
-
-POSE_URL = (
-    "https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
-    "rtmw-dw-l-m_simcc-cocktail14_270e-256x192_20231122.zip"
+from .setting import (
+    CONFIG_PATH,
+    HAND_JOINT_COUNT,
+    KEYPOINT_THRESHOLD,
+    LEFT_HAND_START,
+    MODEL_DIR,
+    ROOT,
 )
+
 LOGGER = logging.getLogger(__name__)
 
 
-def prepare_pose_model() -> str:
+def prepare_pose_model(model_url: str) -> str:
     """Download the official RTMW whole-body model into the project."""
-    destination = MODEL_DIR / "rtmw.onnx"
+    model_name = Path(urllib.parse.urlparse(model_url).path).stem
+    destination = MODEL_DIR / f"{model_name}.onnx"
     if destination.exists():
         return str(destination)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     temporary = ROOT / "temp"
     temporary.mkdir(exist_ok=True)
-    archive = temporary / "rtmw.zip"
-    LOGGER.info("Downloading RTMW model: %s", POSE_URL)
-    urllib.request.urlretrieve(POSE_URL, archive)
+    archive = temporary / f"{model_name}.zip"
+    LOGGER.info("Downloading RTMW model: %s", model_url)
+    urllib.request.urlretrieve(model_url, archive)
     with zipfile.ZipFile(archive) as bundle:
         member = next(name for name in bundle.namelist() if name.endswith(".onnx"))
-        partial = temporary / "rtmw.onnx"
+        partial = temporary / f"{model_name}.onnx"
         with bundle.open(member) as source, partial.open("wb") as target:
             shutil.copyfileobj(source, target)
         partial.replace(destination)
@@ -42,9 +50,32 @@ class HandPose:
     """Extract only the person's anatomical left hand from RTMW landmarks."""
 
     def __init__(self) -> None:
+        with CONFIG_PATH.open("rb") as stream:
+            section = tomllib.load(stream).get("pose")
+        if not isinstance(section, dict):
+            raise ValueError(f"Missing [pose] section in {CONFIG_PATH}")
+        model_size = section.get("model_size")
+        device = section.get("device")
+        if not isinstance(model_size, str) or model_size not in Wholebody.MODE:
+            raise ValueError(f"pose.model_size must be one of: {', '.join(Wholebody.MODE)}")
+        if device not in ("cpu", "cuda"):
+            raise ValueError("pose.device must be cpu or cuda")
+        if device == "cuda":
+            ort.preload_dlls(directory="")
+        preset = Wholebody.MODE[model_size]
+        input_size = preset["pose_input_size"]
+        model_path = prepare_pose_model(preset["pose"])
         self.estimator = RTMPose(
-            prepare_pose_model(), model_input_size=(192, 256),
-            to_openpose=False, backend="onnxruntime", device="cpu",
+            model_path, model_input_size=tuple(input_size),
+            to_openpose=False, backend="onnxruntime", device=device,
+        )
+        providers = self.estimator.session.get_providers()
+        if device == "cuda" and "CUDAExecutionProvider" not in providers:
+            LOGGER.error("RTMW CUDA initialization failed; active providers=%s", providers)
+            raise RuntimeError("RTMW requires CUDA but CUDAExecutionProvider did not initialize")
+        LOGGER.info(
+            "RTMW size=%s model=%s input_size=%s device=%s providers=%s",
+            model_size, model_path, input_size, device, providers,
         )
 
     def extract(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
