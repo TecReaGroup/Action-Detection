@@ -7,8 +7,6 @@ import time
 
 import cv2
 
-from lib.device.WayCamera import WayCamera
-
 
 class _LogiCompatibilityHelper:
     """Provide the handle validation API used by the sampling controller."""
@@ -21,7 +19,7 @@ class _LogiCompatibilityHelper:
             return False
 
 
-class LogiCamera(WayCamera):
+class LogiCamera:
     """Camera adapter for Logitech cameras accessed through OpenCV."""
 
     def __init__(self, cameraConfig):

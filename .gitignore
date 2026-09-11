@@ -61,3 +61,10 @@ data/log/*
 *.wav
 *.m4a
 *.mp4
+data/feature/*
+!data/feature/.gitkeep
+data/train/**/*
+!data/train/**/
+!data/train/**/.gitkeep
+log/*
+!log/.gitkeep

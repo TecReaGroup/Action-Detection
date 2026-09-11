@@ -1,12 +1,19 @@
 [project]
-name = "python-template"
+name = "action-detection"
 version = "0.1.0"
-description = "A production-ready Python project template."
+description = "Single-person continual hand action recognition."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=1.26,<3",
+    "opencv-contrib-python>=4.10,<5",
+    "onnxruntime>=1.20,<2",
+    "rtmlib>=0.0.13,<0.1",
+    "torch>=2.6,<3",
+    "pyside6>=6.8,<7",
+]
 
 [project.scripts]
-python-template = "python_template.cli:main"
+action-detection = "action_detection.cli:main"
 
 [dependency-groups]
 dev = [
@@ -24,7 +31,7 @@ build-backend = "uv_build"
 cache-dir = ".uv-cache"
 
 [tool.uv.build-backend]
-module-name = "python_template"
+module-name = "action_detection"
 module-root = "src"
 
 [tool.ruff]
