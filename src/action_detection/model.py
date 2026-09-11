@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .setting import HAND_EDGES, HAND_JOINT_COUNT
+from .setting import CLIP_LENGTH, HAND_EDGES, HAND_JOINT_COUNT
 
 TEMPORAL_KERNEL = 5
 CHANNELS = (3, 32, 64, 64)
@@ -66,7 +66,7 @@ class GraphTemporalBlock(nn.Module):
 class ContinualSTGCN(nn.Module):
     """Binary thumb-action classifier with constant-memory online inference."""
 
-    warmup_frames = RECEPTIVE_FIELD
+    warmup_frames = CLIP_LENGTH
 
     def training_logits(self, sequence: torch.Tensor) -> torch.Tensor:
         """Exclude incomplete causal receptive fields from supervision."""

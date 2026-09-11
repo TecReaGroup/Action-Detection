@@ -5,9 +5,11 @@ device = "cuda"
 model_size = "balanced"
 
 [temporal]
-# Options: ["continual_stgcn", "skeleton_agent_mstcn"]
-model = "skeleton_agent_mstcn"
+# Options: ["continual_stgcn", "skeleton_agent_mstcn", "sketch_2d"]
+model = "continual_stgcn"
 
 [train]
+# Options: integers >= 13; sampled frames at 10 FPS, shared by training and recognition.
+window_frames = 16
 # Options: positive integers (>= 1)
-epochs = 40
+epochs = 150

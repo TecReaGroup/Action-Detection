@@ -151,7 +151,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     LOGGER.info("Real training clips: positive=%d negative=%d", len(positive_train), len(negative_train))
     LOGGER.info("Holdout: positive=%s (%d clips), negative=%s (%d clips)", positive_video, len(positive_holdout), negative_video, len(negative_holdout))
     loader = DataLoader(TensorDataset(train_x, train_y), batch_size=batch_size, shuffle=True)
-    network = temporal.network_type()
+    network = temporal.create_training_network()
     optimizer = torch.optim.AdamW(network.parameters(), lr=0.001, weight_decay=0.0001)
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor(len(negative_train) / len(positive_train)),
