@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+.uv-cache/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+*.egg-info/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local environment and logs
+.env
+.env.*
+*.log
+temp/*
+!temp/.gitkeep
+
+# Keep directory placeholders if they are added to the repository.
+!data/**/.gitkeep
+
+# Large local audio/model assets and generated outputs
+data/audio/*
+!data/audio/.gitkeep
+data/model/*
+!data/model/.gitkeep
+data/stem/*
+!data/stem/.gitkeep
+data/stem_gated/*
+!data/stem_gated/.gitkeep
+data/midi/*
+!data/midi/.gitkeep
+data/midi_fixed/*
+!data/midi_fixed/.gitkeep
+data/log/*
+!data/log/.gitkeep
+
+*.mid
+*.mp3
+*.wav
+*.m4a
