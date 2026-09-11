@@ -99,7 +99,7 @@ class RecognitionThread(QThread):
                         next_sample += (int((timestamp - next_sample) * SAMPLE_FPS) + 1) / SAMPLE_FPS
                     points, scores, features = pose.extract(frame)
                     if network is not None:
-                        if np.count_nonzero(features[2]) < 12:
+                        if np.count_nonzero(features[2]) < 12 * (features.shape[1] // 21):
                             network.reset_stream()
                             steps = 0
                             probability = 0.0

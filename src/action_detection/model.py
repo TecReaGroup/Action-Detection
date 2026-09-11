@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .setting import CLIP_LENGTH, HAND_EDGES, HAND_JOINT_COUNT
+from .setting import CLIP_LENGTH, FEATURE_JOINT_COUNT, HAND_EDGES, HAND_JOINT_COUNT
 
 TEMPORAL_KERNEL = 5
 CHANNELS = (3, 32, 64, 64)
@@ -13,10 +13,11 @@ RECEPTIVE_FIELD = 1 + (TEMPORAL_KERNEL - 1) * (len(CHANNELS) - 1)
 
 def hand_adjacency() -> torch.Tensor:
     """Build identity, inward and outward normalized hand graph partitions."""
-    inward = torch.zeros(HAND_JOINT_COUNT, HAND_JOINT_COUNT)
+    inward = torch.zeros(FEATURE_JOINT_COUNT, FEATURE_JOINT_COUNT)
     for parent, child in HAND_EDGES:
-        inward[parent, child] = 1
-    partitions = [torch.eye(HAND_JOINT_COUNT), inward, inward.T]
+        for offset in range(0, FEATURE_JOINT_COUNT, HAND_JOINT_COUNT):
+            inward[parent + offset, child + offset] = 1
+    partitions = [torch.eye(FEATURE_JOINT_COUNT), inward, inward.T]
     return torch.stack([part / part.sum(0).clamp_min(1) for part in partitions])
 
 
@@ -26,7 +27,7 @@ class GraphTemporalBlock(nn.Module):
     def __init__(self, input_channels: int, output_channels: int) -> None:
         super().__init__()
         self.register_buffer("adjacency", hand_adjacency())
-        self.edge_weight = nn.Parameter(torch.ones(3, HAND_JOINT_COUNT, HAND_JOINT_COUNT))
+        self.edge_weight = nn.Parameter(torch.ones(3, FEATURE_JOINT_COUNT, FEATURE_JOINT_COUNT))
         self.spatial = nn.Conv2d(input_channels, output_channels * 3, 1)
         self.spatial_norm = nn.BatchNorm2d(output_channels)
         self.temporal = nn.Conv2d(output_channels, output_channels, (TEMPORAL_KERNEL, 1))
@@ -55,7 +56,7 @@ class GraphTemporalBlock(nn.Module):
         spatial = self.spatial_features(frame)
         if self.history is None:
             self.history = spatial.new_zeros(
-                spatial.shape[0], spatial.shape[1], TEMPORAL_KERNEL - 1, HAND_JOINT_COUNT,
+                spatial.shape[0], spatial.shape[1], TEMPORAL_KERNEL - 1, FEATURE_JOINT_COUNT,
             )
         temporal_input = torch.cat((self.history, spatial), dim=2)
         self.history = temporal_input[:, :, 1:].detach()

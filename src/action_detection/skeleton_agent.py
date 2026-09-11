@@ -31,7 +31,7 @@ import torch
 from torch import nn
 
 from .model import hand_adjacency
-from .setting import CLIP_LENGTH, HAND_JOINT_COUNT
+from .setting import CLIP_LENGTH, FEATURE_JOINT_COUNT
 
 DILATIONS = (1, 2, 3, 4)
 WINDOW_CHANNELS = (3, 32, 64, 64)
@@ -56,7 +56,7 @@ class MultiScaleTemporalConv(nn.Module):
         ))
         branches.append(nn.Conv2d(channels, branch_width, 1))
         self.branch = nn.ModuleList(branches)
-        self.global_weight = nn.Parameter(torch.zeros(HAND_JOINT_COUNT))
+        self.global_weight = nn.Parameter(torch.zeros(FEATURE_JOINT_COUNT))
         self.transform = nn.Sequential(
             nn.BatchNorm2d(channels), nn.ReLU(), nn.Conv2d(channels, channels, 1),
             nn.BatchNorm2d(channels),
@@ -66,8 +66,8 @@ class MultiScaleTemporalConv(nn.Module):
         """Apply symmetric temporal padding within the observed window."""
         augmented = torch.cat((sequence, sequence.mean(-1, keepdim=True)), dim=-1)
         combined = torch.cat([branch(augmented) for branch in self.branch], dim=1)
-        local = combined[..., :HAND_JOINT_COUNT]
-        global_feature = combined[..., HAND_JOINT_COUNT:]
+        local = combined[..., :FEATURE_JOINT_COUNT]
+        global_feature = combined[..., FEATURE_JOINT_COUNT:]
         return self.transform(local + global_feature * self.global_weight)
 
 

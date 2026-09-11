@@ -35,12 +35,12 @@ import numpy as np
 import torch
 from torch import nn
 
-from .setting import CLIP_LENGTH, HAND_JOINT_COUNT, KEYPOINT_THRESHOLD, MODEL_DIR
+from .setting import CLIP_LENGTH, FEATURE_JOINT_COUNT, KEYPOINT_THRESHOLD, MODEL_DIR
 
 BACKBONE = "swin_tiny_patch4_window7_224.ms_in1k"
 IMAGE_SIZE = 224
 PANEL_HEIGHT = IMAGE_SIZE // 2
-COORDINATE_WIDTH = CLIP_LENGTH * HAND_JOINT_COUNT
+COORDINATE_WIDTH = CLIP_LENGTH * FEATURE_JOINT_COUNT
 # Joint identity is encoded by a fixed RGB palette across all windows.
 JOINT_COLORS = (
     (0, 128, 0), (105, 105, 105), (0, 0, 255), (165, 42, 42), (127, 255, 0),
@@ -64,7 +64,7 @@ def coordinate_image(sequence: np.ndarray) -> np.ndarray:
         span = float(valid.max() - valid.min())
         normalized = (coordinates - valid.min()) / max(span, 1e-6)
         height = axis * PANEL_HEIGHT + (1 - normalized.clip(0, 1)) * (PANEL_HEIGHT - 1)
-        for joint in range(HAND_JOINT_COUNT):
+        for joint in range(FEATURE_JOINT_COUNT):
             for timestamp in range(1, sequence.shape[1]):
                 if visible[timestamp - 1, joint] and visible[timestamp, joint]:
                     cv2.line(

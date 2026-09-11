@@ -1,4 +1,4 @@
-.PHONY: install train run
+.PHONY: install train run app
 
 install:
 	uv sync
@@ -8,3 +8,6 @@ train:
 
 run:
 	uv run action-detection run
+
+app:
+	uv run python -m app.main

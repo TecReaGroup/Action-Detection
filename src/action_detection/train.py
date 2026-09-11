@@ -11,12 +11,12 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from .pose import HandPose
-from .setting import CLIP_LENGTH, FEATURE_DIR, NEGATIVE_DIR, SAMPLE_FPS, TRAIN_DIR
+from .setting import CLIP_LENGTH, FEATURE_DIR, HAND_SELECTION, NEGATIVE_DIR, SAMPLE_FPS, TRAIN_DIR
 from .temporal import load_temporal_model
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
-FEATURE_VERSION = "rtmw-fullframe-left-hand21-v2"
+FEATURE_VERSION = f"rtmw-fullframe-{HAND_SELECTION}-v3"
 TRAIN_FRACTION = 0.8
 
 

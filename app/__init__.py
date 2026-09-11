@@ -1,0 +1,1 @@
+"""Independent video annotation application."""

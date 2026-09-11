@@ -29,7 +29,14 @@ CLIP_LENGTH = load_window_frames()
 KEYPOINT_THRESHOLD = 0.35
 ACTION_THRESHOLD = 0.75
 HAND_JOINT_COUNT = 21
+with CONFIG_PATH.open("rb") as stream:
+    HAND_SELECTION = tomllib.load(stream).get("pose", {}).get("hand")
+if HAND_SELECTION not in ("left", "right", "both"):
+    raise ValueError("pose.hand must be left, right, or both")
+HAND_COUNT = 2 if HAND_SELECTION == "both" else 1
+FEATURE_JOINT_COUNT = HAND_JOINT_COUNT * HAND_COUNT
 LEFT_HAND_START = 91
+RIGHT_HAND_START = 112
 HAND_EDGES = tuple(
     edge
     for finger in range(5)

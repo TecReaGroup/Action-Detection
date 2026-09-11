@@ -15,8 +15,10 @@ from rtmlib import RTMPose, Wholebody
 from .setting import (
     CONFIG_PATH,
     HAND_JOINT_COUNT,
+    HAND_SELECTION,
     KEYPOINT_THRESHOLD,
     LEFT_HAND_START,
+    RIGHT_HAND_START,
     MODEL_DIR,
     ROOT,
 )
@@ -47,7 +49,7 @@ def prepare_pose_model(model_url: str) -> str:
 
 
 class HandPose:
-    """Extract only the person's anatomical left hand from RTMW landmarks."""
+    """Extract the configured anatomical hands from RTMW landmarks."""
 
     def __init__(self) -> None:
         with CONFIG_PATH.open("rb") as stream:
@@ -55,6 +57,7 @@ class HandPose:
         if not isinstance(section, dict):
             raise ValueError(f"Missing [pose] section in {CONFIG_PATH}")
         model_size = section.get("model_size")
+        hand = HAND_SELECTION
         device = section.get("device")
         if not isinstance(model_size, str) or model_size not in Wholebody.MODE:
             raise ValueError(f"pose.model_size must be one of: {', '.join(Wholebody.MODE)}")
@@ -69,6 +72,8 @@ class HandPose:
             model_path, model_input_size=tuple(input_size),
             to_openpose=False, backend="onnxruntime", device=device,
         )
+        self.hand = hand
+        LOGGER.info("Pose hand=%s", hand)
         providers = self.estimator.session.get_providers()
         if device == "cuda" and "CUDAExecutionProvider" not in providers:
             LOGGER.error("RTMW CUDA initialization failed; active providers=%s", providers)
@@ -79,18 +84,28 @@ class HandPose:
         )
 
     def extract(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return left-hand pixels, scores and normalized (3, 21) features."""
+        """Return configured hand pixels, scores and normalized features."""
         coordinates, confidence = self.estimator(frame)
-        left_hand = slice(LEFT_HAND_START, LEFT_HAND_START + HAND_JOINT_COUNT)
-        points = coordinates[0, left_hand].astype(np.float32)
-        scores = np.clip(confidence[0, left_hand], 0, 1).astype(np.float32)
-        features = np.zeros((3, HAND_JOINT_COUNT), dtype=np.float32)
-        visible = scores >= KEYPOINT_THRESHOLD
-        scale = float(np.linalg.norm(points[9] - points[0]))
-        # A visible wrist, palm anchor and thumb are required for thumb motion.
-        if visible[0] and visible[9] and visible[1:5].all() and scale >= 5 and visible.sum() >= 12:
-            normalized = np.clip((points - points[0]) / scale, -5, 5)
-            normalized[~visible] = 0
-            features[:2] = normalized.T
-            features[2] = scores * visible
+        starts = {"left": (LEFT_HAND_START,), "right": (RIGHT_HAND_START,),
+                  "both": (LEFT_HAND_START, RIGHT_HAND_START)}[self.hand]
+        point_sets = [coordinates[0, start:start + HAND_JOINT_COUNT].astype(np.float32)
+                      for start in starts]
+        score_sets = [np.clip(confidence[0, start:start + HAND_JOINT_COUNT], 0, 1).astype(np.float32)
+                      for start in starts]
+        points = np.concatenate(point_sets)
+        scores = np.concatenate(score_sets)
+        features = np.zeros((3, HAND_JOINT_COUNT * len(starts)), dtype=np.float32)
+        for hand_index, (hand_points, hand_scores) in enumerate(zip(point_sets, score_sets)):
+            offset = hand_index * HAND_JOINT_COUNT
+            hand_features = features[:, offset:offset + HAND_JOINT_COUNT]
+            visible = hand_scores >= KEYPOINT_THRESHOLD
+            scale = float(np.linalg.norm(hand_points[9] - hand_points[0]))
+            if visible[0] and visible[9] and visible[1:5].all() and scale >= 5 and visible.sum() >= 12:
+                normalized = np.clip((hand_points - hand_points[0]) / scale, -5, 5)
+                normalized[~visible] = 0
+                hand_features[:2] = normalized.T
+                hand_features[2] = hand_scores * visible
+        if any(np.count_nonzero(features[2, offset:offset + HAND_JOINT_COUNT]) < 12
+               for offset in range(0, features.shape[1], HAND_JOINT_COUNT)):
+            features.fill(0)
         return points, scores, features

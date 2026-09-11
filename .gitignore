@@ -68,3 +68,10 @@ data/train/**/*
 !data/train/**/.gitkeep
 log/*
 !log/.gitkeep
+
+app/data/video/*
+!app/data/video/.gitkeep
+app/data/model/*
+!app/data/model/.gitkeep
+app/data/feature/*
+!app/data/feature/.gitkeep
