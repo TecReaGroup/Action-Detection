@@ -52,7 +52,7 @@ class RecognitionThread(QThread):
                 }
                 if any(checkpoint.get(key) != value for key, value in expected.items()):
                     raise ValueError("Checkpoint model or preprocessing changed; run training again")
-                network = temporal.network_type().eval()
+                network = temporal.network_type().to(temporal.device).eval()
                 network.load_state_dict(checkpoint["state_dict"])
                 action = checkpoint["action"]
                 LOGGER.info("Loaded action model: %s", temporal.checkpoint_path)
@@ -105,7 +105,7 @@ class RecognitionThread(QThread):
                             probability = 0.0
                             label = "未检测到清晰手部"
                         else:
-                            logit = network.forward_step(torch.from_numpy(features).unsqueeze(0))
+                            logit = network.forward_step(torch.from_numpy(features).unsqueeze(0).to(temporal.device))
                             steps += 1
                             if logit is not None:
                                 score = logit.sigmoid().item()

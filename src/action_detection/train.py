@@ -154,7 +154,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     network = temporal.create_training_network()
     optimizer = torch.optim.AdamW(network.parameters(), lr=0.001, weight_decay=0.0001)
     criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor(len(negative_train) / len(positive_train)),
+        pos_weight=torch.tensor(len(negative_train) / len(positive_train), device=temporal.device),
     )
     validation_criterion = nn.BCEWithLogitsLoss(reduction="none")
     best_loss = float("inf")
@@ -162,6 +162,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
         network.train()
         total_loss = 0.0
         for clip, target in loader:
+            clip, target = clip.to(temporal.device), target.to(temporal.device)
             optimizer.zero_grad()
             logits = network.training_logits(clip)
             loss = criterion(logits, target[:, None].expand_as(logits))
@@ -174,8 +175,8 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
         correct = 0
         with torch.inference_mode():
             for start in range(0, len(validation_y), batch_size):
-                target = validation_y[start:start + batch_size]
-                logits = network.training_logits(validation_x[start:start + batch_size])
+                target = validation_y[start:start + batch_size].to(temporal.device)
+                logits = network.training_logits(validation_x[start:start + batch_size].to(temporal.device))
                 clip_loss = validation_criterion(logits, target[:, None].expand_as(logits)).mean(1)
                 class_weight = torch.where(
                     target.bool(), 1 / max(len(positive_holdout), 1),

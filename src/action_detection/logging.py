@@ -1,9 +1,8 @@
 """Daily logging in UTC+08:00."""
 
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
-
-from .setting import ROOT
 
 LOCAL_TZ = timezone(timedelta(hours=8))
 
@@ -13,23 +12,11 @@ class LocalFormatter(logging.Formatter):
         return datetime.fromtimestamp(record.created, LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S +08:00")
 
 
-class DailyFile(logging.Handler):
-    """Choose the log file using each record's local date."""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        day = datetime.fromtimestamp(record.created, LOCAL_TZ).strftime("%Y-%m-%d")
-        try:
-            with (ROOT / "log" / f"log_{day}.log").open("a", encoding="utf-8") as stream:
-                stream.write(self.format(record) + "\n")
-        except OSError:
-            self.handleError(record)
-
-
 def configure_logging() -> None:
-    """Attach console and daily persistent logging."""
-    (ROOT / "log").mkdir(exist_ok=True)
+    """Configure UTF-8 logging to the terminal."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     formatter = LocalFormatter("[%(asctime)s] [%(levelname)s] [%(name)s] - %(message)s")
-    sinks = [logging.StreamHandler(), DailyFile()]
-    for sink in sinks:
-        sink.setFormatter(formatter)
-    logging.basicConfig(level=logging.INFO, handlers=sinks, force=True)
+    sink = logging.StreamHandler(sys.stdout)
+    sink.setFormatter(formatter)
+    logging.basicConfig(level=logging.INFO, handlers=[sink], force=True)

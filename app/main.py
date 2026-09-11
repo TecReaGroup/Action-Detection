@@ -1,6 +1,5 @@
 """Launch the independent PySide video annotation workspace."""
 
-import codecs
 import logging
 import sys
 
@@ -10,7 +9,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QListWidget,
-    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSlider, QStyle,
+    QMainWindow, QMessageBox, QPushButton, QSlider, QStyle,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -42,10 +41,8 @@ class AnnotationWindow(QMainWindow):
         )
         self.annotation: Annotation | None = None
         self.dirty = False
-        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.training = QProcess(self)
         self.training.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.training.readyReadStandardOutput.connect(self.read_training_log)
         self.training.finished.connect(self.training_finished)
         self.training.errorOccurred.connect(self.training_error)
         self.player = QMediaPlayer(self)
@@ -127,11 +124,6 @@ class AnnotationWindow(QMainWindow):
         delete.clicked.connect(self.delete_interval)
         editing.addWidget(delete)
         layout.addLayout(editing)
-        self.training_log = QPlainTextEdit()
-        self.training_log.setReadOnly(True)
-        self.training_log.setMaximumBlockCount(2000)
-        self.training_log.setMaximumHeight(120)
-        layout.addWidget(self.training_log)
         footer = QHBoxLayout()
         self.status = QLabel("No video selected")
         self.status.setWordWrap(True)
@@ -319,8 +311,6 @@ class AnnotationWindow(QMainWindow):
             self.show_error("No saved annotations")
             return
         self.player.pause()
-        self.training_log.clear()
-        self.decoder.reset()
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
         self.training.setProcessEnvironment(environment)
@@ -331,12 +321,11 @@ class AnnotationWindow(QMainWindow):
         self.training.start(sys.executable, ["-u", "-m", "app.train"])
 
     def read_training_log(self) -> None:
-        text = self.decoder.decode(bytes(self.training.readAllStandardOutput()))
-        cursor = self.training_log.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.training_log.setTextCursor(cursor)
-        self.training_log.ensureCursorVisible()
+        """Forward child-process progress to both the app and its terminal."""
+        text = bytes(self.training.readAllStandardOutput()).decode("utf-8", errors="replace")
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        self.training_log.appendPlainText(text.rstrip())
 
     def training_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.read_training_log()

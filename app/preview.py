@@ -94,7 +94,8 @@ class PreviewWindow(QWidget):
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         if state.get("clip_length") != CLIP_LENGTH or state.get("feature_version", "").split("-")[1:2] != ["both"] and FEATURE_JOINT_COUNT == 42:
             raise ValueError("Checkpoint does not match current hand configuration")
-        self.network = temporal.network_type().eval()
+        self.inference_device = temporal.device
+        self.network = temporal.network_type().to(self.inference_device).eval()
         self.network.load_state_dict(state["state_dict"])
         self.capture = cv2.VideoCapture(str(video))
         self.window.clear()
@@ -121,7 +122,8 @@ class PreviewWindow(QWidget):
             self.window = self.window[-CLIP_LENGTH:]
             if len(self.window) == CLIP_LENGTH:
                 with torch.inference_mode():
-                    confidence = self.network(torch.from_numpy(np.stack(self.window)[None]).float()).sigmoid().item()
+                    window = torch.from_numpy(np.stack(self.window, axis=1)[None]).to(self.inference_device)
+                    confidence = self.network.training_logits(window).sigmoid().mean().item()
                 self.display.confidence = confidence
                 self.display.caption = f"Confidence: {confidence:.1%}"
         self.display.update()

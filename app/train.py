@@ -138,8 +138,7 @@ def train_annotations() -> None:
             f"Both classes need complete visible-hand windows ({CLIP_LENGTH} frames): "
             f"positive={int(positives)}, negative={int(negatives)}"
         )
-    # ORT owns pose CUDA inference; temporal training uses the installed torch capability.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = temporal.device
     del pose
     network = temporal.create_training_network().to(device)
     loader = DataLoader(TensorDataset(torch.from_numpy(np.stack(clips)), torch.tensor(labels)),

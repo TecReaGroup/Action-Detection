@@ -5,6 +5,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import torch
+
 from .model import ContinualSTGCN
 from .setting import CLIP_LENGTH, CONFIG_PATH, MODEL_DIR, SAMPLE_FPS
 from .skeleton_agent import SkeletonAgentMSTCN
@@ -24,13 +26,14 @@ class TemporalModel:
     name: str
     network_type: type[ContinualSTGCN] | type[SkeletonAgentMSTCN] | type[Sketch2D]
     checkpoint_path: Path
+    device: torch.device
 
     def create_training_network(self) -> ContinualSTGCN | SkeletonAgentMSTCN | Sketch2D:
         """Initialize training weights required by the selected architecture."""
         network = self.network_type()
         if isinstance(network, Sketch2D):
             network.initialize_pretrained()
-        return network
+        return network.to(self.device)
 
 
 def load_temporal_model() -> TemporalModel:
@@ -44,8 +47,15 @@ def load_temporal_model() -> TemporalModel:
     if not isinstance(name, str) or name not in MODEL_TYPES:
         raise ValueError(f"temporal.model must be one of: {', '.join(MODEL_TYPES)}")
     checkpoint_path = MODEL_DIR / f"thumb_sway_left_{name}.pt"
+    device_name = configuration.get("pose", {}).get("device")
+    if device_name not in ("cpu", "cuda"):
+        raise ValueError("pose.device must be cpu or cuda")
+    if device_name == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("Temporal CUDA unavailable; install CUDA-enabled PyTorch with uv sync")
+    device = torch.device(device_name)
+    logging.getLogger(__name__).info("Temporal device=%s", device)
     logging.getLogger(__name__).info(
         "Temporal model=%s checkpoint=%s window_frames=%d window_seconds=%.2f",
         name, checkpoint_path, CLIP_LENGTH, CLIP_LENGTH / SAMPLE_FPS,
     )
-    return TemporalModel(name, MODEL_TYPES[name], checkpoint_path)
+    return TemporalModel(name, MODEL_TYPES[name], checkpoint_path, device)
