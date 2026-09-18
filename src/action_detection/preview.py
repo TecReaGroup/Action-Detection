@@ -4,6 +4,7 @@ import importlib.util
 import logging
 import threading
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -13,7 +14,11 @@ from PySide6.QtGui import QCloseEvent, QImage, QPainter, QColor, QFont
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from .pose import HandPose
-from .setting import ACTION_THRESHOLD, CLIP_LENGTH, HAND_EDGES, KEYPOINT_THRESHOLD, ROOT, SAMPLE_FPS
+from .render import draw_hand_skeleton
+from .setting import (
+    ACTION_THRESHOLD, CLIP_LENGTH, ROOT,
+    SAMPLE_FPS, STREAM_RETENTION_SECONDS,
+)
 from .temporal import load_temporal_model
 from .train import FEATURE_VERSION
 
@@ -76,9 +81,10 @@ class RecognitionThread(QThread):
             LOGGER.info("Camera %d opened using %s", self.camera_index, camera.backend)
             next_sample = 0.0
             last_frame = time.monotonic()
-            steps = 0
+            window: deque[np.ndarray] = deque(maxlen=CLIP_LENGTH)
             probability = 0.0
-            label = "模型未训练" if network is None else "等待手部进入画面"
+            last_valid = None
+            label = "模型未训练"
             with torch.inference_mode():
                 while not self.isInterruptionRequested():
                     timestamp, frame = camera.getFrame(timeout=0.1)
@@ -89,40 +95,32 @@ class RecognitionThread(QThread):
                     last_frame = time.monotonic()
                     if timestamp < next_sample:
                         continue
-                    if next_sample and timestamp - next_sample > 0.5 and network is not None:
-                        network.reset_stream()
-                        steps = 0
+                    if last_valid is not None and timestamp - last_valid > STREAM_RETENTION_SECONDS and network is not None:
+                        window.clear()
                         probability = 0.0
+                        last_valid = None
+                        LOGGER.info("Action history expired after missing hand observations")
                     if not next_sample or timestamp - next_sample > 0.5:
                         next_sample = timestamp + 1 / SAMPLE_FPS
                     else:
                         next_sample += (int((timestamp - next_sample) * SAMPLE_FPS) + 1) / SAMPLE_FPS
-                    points, scores, features = pose.extract(frame)
+                    points, scores, features = pose.extract(frame, timestamp)
                     if network is not None:
-                        if np.count_nonzero(features[2]) < 12 * (features.shape[1] // 21):
-                            network.reset_stream()
-                            steps = 0
-                            probability = 0.0
-                            label = "未检测到清晰手部"
-                        else:
-                            logit = network.forward_step(torch.from_numpy(features).unsqueeze(0).to(temporal.device))
-                            steps += 1
-                            if logit is not None:
-                                score = logit.sigmoid().item()
-                                probability = score if steps <= network.warmup_frames else 0.7 * probability + 0.3 * score
-                            label = "正在收集动作…" if steps < network.warmup_frames else (
-                                action if probability >= ACTION_THRESHOLD else "未识别到目标动作"
-                            )
-                    for first, second in HAND_EDGES:
-                        if scores[first] >= KEYPOINT_THRESHOLD and scores[second] >= KEYPOINT_THRESHOLD:
-                            cv2.line(frame, tuple(points[first].astype(int)), tuple(points[second].astype(int)), (60, 220, 100), 2, cv2.LINE_AA)
-                    for point, score in zip(points, scores):
-                        if score >= KEYPOINT_THRESHOLD:
-                            cv2.circle(frame, tuple(point.astype(int)), 3, (30, 190, 255), -1, cv2.LINE_AA)
+                        if np.any(features[2]):
+                            last_valid = pose.observed_at
+                        if not window:
+                            window.extend([features] * (CLIP_LENGTH - 1))
+                        window.append(features)
+                        clip = torch.from_numpy(np.stack(window, axis=1)[None]).to(temporal.device)
+                        probability = network.training_logits(clip).sigmoid().mean().item()
+                        if not np.isfinite(probability):
+                            raise RuntimeError("Action model returned a non-finite probability")
+                        label = action if probability >= ACTION_THRESHOLD else "未识别到目标动作"
+                    draw_hand_skeleton(frame, points, scores)
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format.Format_RGB888).copy()
                     caption = label
-                    if network is not None and steps >= network.warmup_frames:
+                    if network is not None:
                         caption += f"\n{action}置信度：{probability:.1%}"
                     with self.lock:
                         self.latest = (image, caption)

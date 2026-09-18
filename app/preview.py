@@ -15,9 +15,11 @@ from PySide6.QtGui import QColor, QCloseEvent, QImage, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from action_detection.pose import HandPose
+from action_detection.render import draw_hand_skeleton
 from action_detection.setting import (
-    ACTION_THRESHOLD, CLIP_LENGTH, HAND_EDGES, HAND_JOINT_COUNT,
-    HAND_SELECTION, KEYPOINT_THRESHOLD, POSE_FEATURE_VERSION, SAMPLE_FPS,
+    ACTION_THRESHOLD, CLIP_LENGTH,
+    HAND_SELECTION, POSE_FEATURE_VERSION, SAMPLE_FPS,
+    STREAM_RETENTION_SECONDS,
 )
 from action_detection.temporal import load_temporal_model
 from app.annotation import MODEL_DIR
@@ -102,7 +104,7 @@ class VideoRecognition(QThread):
             LOGGER.info("Preview started video=%s fps=%.3f sample_fps=%d", self.video, fps, SAMPLE_FPS)
             self.status.emit("正在播放并识别；推理较慢时自动减速")
             window: deque[np.ndarray] = deque(maxlen=CLIP_LENGTH)
-            previous_pose: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+            last_valid = None
             frame_index = 0
             previous_ms = -1.0
             next_sample_ms = 0.0
@@ -120,7 +122,8 @@ class VideoRecognition(QThread):
                         previous_ms = -1.0
                         next_sample_ms = 0.0
                         previous_sample_ms = None
-                        previous_pose = None
+                        pose.reset()
+                        last_valid = None
                         window.clear()
                         presented_at = time.monotonic()
                         LOGGER.info("Preview seek video=%s position_ms=%d", self.video, seek_position)
@@ -145,32 +148,24 @@ class VideoRecognition(QThread):
                     if timestamp_ms + 1e-6 < next_sample_ms:
                         continue
                     next_sample_ms = (math.floor(timestamp_ms * SAMPLE_FPS / 1000) + 1) * 1000 / SAMPLE_FPS
-                    points, scores, features = pose.extract(frame)
-                    confidence = None
-                    if np.count_nonzero(features[2]) >= 12 * (features.shape[1] // HAND_JOINT_COUNT):
-                        previous_pose = points, scores, features
-                    elif previous_pose is not None:
-                        points, scores, features = previous_pose
-                    caption = "等待首次检测到清晰手部"
-                    if previous_pose is not None:
-                        # Repeat the first observation to satisfy the fixed model input window.
-                        if not window:
-                            window.extend([features] * (CLIP_LENGTH - 1))
-                        window.append(features)
-                        clip = torch.from_numpy(np.stack(window, axis=1)[None]).to(temporal.device)
-                        confidence = network.training_logits(clip).sigmoid().mean().item()
-                        if not math.isfinite(confidence):
-                            raise RuntimeError("动作模型输出了无效置信度")
-                        caption = "识别到目标动作" if confidence >= ACTION_THRESHOLD else "未识别到目标动作"
-                    for offset in range(0, len(points), HAND_JOINT_COUNT):
-                        for first, second in HAND_EDGES:
-                            first, second = first + offset, second + offset
-                            if scores[first] >= KEYPOINT_THRESHOLD and scores[second] >= KEYPOINT_THRESHOLD:
-                                cv2.line(frame, tuple(points[first].astype(int)),
-                                         tuple(points[second].astype(int)), (60, 220, 100), 2, cv2.LINE_AA)
-                    for point, score in zip(points, scores):
-                        if score >= KEYPOINT_THRESHOLD:
-                            cv2.circle(frame, tuple(point.astype(int)), 3, (30, 190, 255), -1, cv2.LINE_AA)
+                    timestamp = timestamp_ms / 1000
+                    points, scores, features = pose.extract(frame, timestamp)
+                    if last_valid is not None and timestamp - last_valid > STREAM_RETENTION_SECONDS:
+                        window.clear()
+                        last_valid = None
+                        LOGGER.info("Action history expired after missing hand observations")
+                    if np.any(features[2]):
+                        last_valid = pose.observed_at
+                    # Repeat the first observation to satisfy the fixed model input window.
+                    if not window:
+                        window.extend([features] * (CLIP_LENGTH - 1))
+                    window.append(features)
+                    clip = torch.from_numpy(np.stack(window, axis=1)[None]).to(temporal.device)
+                    confidence = network.training_logits(clip).sigmoid().mean().item()
+                    if not math.isfinite(confidence):
+                        raise RuntimeError("动作模型输出了无效置信度")
+                    caption = "识别到目标动作" if confidence >= ACTION_THRESHOLD else "未识别到目标动作"
+                    draw_hand_skeleton(frame, points, scores)
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0],
                                    QImage.Format.Format_RGB888).copy()

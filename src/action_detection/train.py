@@ -28,6 +28,7 @@ def extract_video(video: Path, pose: HandPose) -> np.ndarray:
         with np.load(cache) as stored:
             return stored["feature"]
     capture = cv2.VideoCapture(str(video))
+    pose.reset()
     try:
         if not capture.isOpened():
             raise RuntimeError(f"Cannot open training video: {video}")
@@ -45,7 +46,7 @@ def extract_video(video: Path, pose: HandPose) -> np.ndarray:
             index += 1
             if timestamp + 1e-6 < next_sample:
                 continue
-            _, _, feature = pose.extract(image)
+            _, _, feature = pose.extract(image, timestamp)
             while next_sample <= timestamp + 1e-6:
                 frames.append(feature)
                 next_sample += 1 / SAMPLE_FPS
@@ -60,12 +61,11 @@ def extract_video(video: Path, pose: HandPose) -> np.ndarray:
 
 
 def video_clips(sequence: np.ndarray) -> list[np.ndarray]:
-    """Keep complete windows with a consistently visible hand."""
+    """Keep complete windows including partial and missing hand observations."""
     clips = []
     for start in range(0, sequence.shape[1] - CLIP_LENGTH + 1, CLIP_LENGTH // 4):
         clip = sequence[:, start:start + CLIP_LENGTH].copy()
-        if np.all((clip[2] > 0).sum(axis=1) >= 12):
-            clips.append(clip)
+        clips.append(clip)
     return clips
 
 

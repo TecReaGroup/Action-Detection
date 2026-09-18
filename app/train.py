@@ -34,6 +34,7 @@ def extract_features(annotation: Annotation, pose: HandPose) -> tuple[np.ndarray
         with np.load(cache) as stored:
             return stored["feature"], stored["timestamp_ms"]
     capture = cv2.VideoCapture(str(annotation.video))
+    pose.reset()
     try:
         if not capture.isOpened():
             raise ValueError(f"Cannot open video: {annotation.video}")
@@ -58,7 +59,7 @@ def extract_features(annotation: Annotation, pose: HandPose) -> tuple[np.ndarray
             frame_index += 1
             if timestamp_ms + 1e-6 < next_sample:
                 continue
-            _, _, feature = pose.extract(image)
+            _, _, feature = pose.extract(image, timestamp_ms / 1000)
             frames.append(feature)
             timestamps.append(timestamp_ms)
             next_sample = (math.floor(timestamp_ms * SAMPLE_FPS / 1000) + 1) * 1000 / SAMPLE_FPS
@@ -80,7 +81,7 @@ def extract_features(annotation: Annotation, pose: HandPose) -> tuple[np.ndarray
 def annotated_clips(
     annotation: Annotation, sequence: np.ndarray, timestamps: np.ndarray,
 ) -> tuple[list[np.ndarray], list[float]]:
-    """Reject windows that cross any label boundary or contain missing hand frames."""
+    """Keep temporally continuous windows within annotation boundaries."""
     clips = []
     labels = []
     for offset in range(0, len(timestamps) - CLIP_LENGTH + 1, max(1, CLIP_LENGTH // 4)):
@@ -96,8 +97,6 @@ def annotated_clips(
         if overlaps and not positive:
             continue
         clip = sequence[:, offset:stop]
-        if not np.all((clip[2] > 0).sum(axis=1) >= 12):
-            continue
         clips.append(clip.copy())
         labels.append(float(positive))
     return clips, labels
