@@ -10,10 +10,11 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from rtmlib import RTMPose, Wholebody
+from rtmlib import RTMPose, Wholebody, YOLOX
 
 from .setting import (
     CONFIG_PATH,
+    FEATURE_JOINT_COUNT,
     HAND_JOINT_COUNT,
     HAND_SELECTION,
     KEYPOINT_THRESHOLD,
@@ -27,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def prepare_pose_model(model_url: str) -> str:
-    """Download the official RTMW whole-body model into the project."""
+    """Download an OpenMMLab detection or pose model into the project."""
     model_name = Path(urllib.parse.urlparse(model_url).path).stem
     destination = MODEL_DIR / f"{model_name}.onnx"
     if destination.exists():
@@ -36,7 +37,7 @@ def prepare_pose_model(model_url: str) -> str:
     temporary = ROOT / "temp"
     temporary.mkdir(exist_ok=True)
     archive = temporary / f"{model_name}.zip"
-    LOGGER.info("Downloading RTMW model: %s", model_url)
+    LOGGER.info("Downloading detection/pose model: %s", model_url)
     urllib.request.urlretrieve(model_url, archive)
     with zipfile.ZipFile(archive) as bundle:
         member = next(name for name in bundle.namelist() if name.endswith(".onnx"))
@@ -68,6 +69,18 @@ class HandPose:
         preset = Wholebody.MODE[model_size]
         input_size = preset["pose_input_size"]
         model_path = prepare_pose_model(preset["pose"])
+        detector_path = prepare_pose_model(preset["det"])
+        self.detector = YOLOX(
+            detector_path, model_input_size=tuple(preset["det_input_size"]),
+            backend="onnxruntime", device=device,
+        )
+        detector_providers = self.detector.session.get_providers()
+        if device == "cuda" and "CUDAExecutionProvider" not in detector_providers:
+            raise RuntimeError("Human detector CUDAExecutionProvider did not initialize")
+        LOGGER.info(
+            "Human detector model=%s input_size=%s device=%s providers=%s selection=largest",
+            detector_path, preset["det_input_size"], device, detector_providers,
+        )
         self.estimator = RTMPose(
             model_path, model_input_size=tuple(input_size),
             to_openpose=False, backend="onnxruntime", device=device,
@@ -84,8 +97,17 @@ class HandPose:
         )
 
     def extract(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return configured hand pixels, scores and normalized features."""
-        coordinates, confidence = self.estimator(frame)
+        """Detect the largest person and return hand pixels, scores and features."""
+        boxes = np.asarray(self.detector(frame), dtype=np.float32)
+        if len(boxes) == 0:
+            return (
+                np.zeros((FEATURE_JOINT_COUNT, 2), dtype=np.float32),
+                np.zeros(FEATURE_JOINT_COUNT, dtype=np.float32),
+                np.zeros((3, FEATURE_JOINT_COUNT), dtype=np.float32),
+            )
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        person_box = boxes[int(np.argmax(areas))]
+        coordinates, confidence = self.estimator(frame, bboxes=[person_box])
         starts = {"left": (LEFT_HAND_START,), "right": (RIGHT_HAND_START,),
                   "both": (LEFT_HAND_START, RIGHT_HAND_START)}[self.hand]
         point_sets = [coordinates[0, start:start + HAND_JOINT_COUNT].astype(np.float32)

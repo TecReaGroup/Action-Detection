@@ -1,6 +1,6 @@
 [pose]
 # Options: "left", "right", "both"; "both" uses 42 keypoints.
-hand = "both"
+hand = "left"
 # Options: "cpu", "cuda"
 device = "cuda"
 # Options: "lightweight", "balanced", "performance"
@@ -14,4 +14,4 @@ model = "continual_stgcn"
 # Options: integers >= 13; sampled frames at 10 FPS, shared by training and recognition.
 window_frames = 16
 # Options: positive integers (>= 1)
-epochs = 40
+epochs = 100

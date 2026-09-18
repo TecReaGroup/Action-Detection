@@ -26,7 +26,7 @@ def load_window_frames() -> int:
 
 
 CLIP_LENGTH = load_window_frames()
-KEYPOINT_THRESHOLD = 0.35
+KEYPOINT_THRESHOLD = 0.43
 ACTION_THRESHOLD = 0.75
 HAND_JOINT_COUNT = 21
 with CONFIG_PATH.open("rb") as stream:
@@ -35,6 +35,7 @@ if HAND_SELECTION not in ("left", "right", "both"):
     raise ValueError("pose.hand must be left, right, or both")
 HAND_COUNT = 2 if HAND_SELECTION == "both" else 1
 FEATURE_JOINT_COUNT = HAND_JOINT_COUNT * HAND_COUNT
+POSE_FEATURE_VERSION = f"rtmw-person-crop-{HAND_SELECTION}-kpt{KEYPOINT_THRESHOLD}-v1"
 LEFT_HAND_START = 91
 RIGHT_HAND_START = 112
 HAND_EDGES = tuple(

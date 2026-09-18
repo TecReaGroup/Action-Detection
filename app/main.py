@@ -9,7 +9,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QListWidget,
-    QMainWindow, QMessageBox, QPushButton, QSlider, QStyle,
+    QMainWindow, QMessageBox, QPushButton, QSlider, QStackedWidget, QStyle,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -40,9 +40,11 @@ class AnnotationWindow(QMainWindow):
             "QPushButton#train:disabled { background: #9ba8b9; }"
         )
         self.annotation: Annotation | None = None
+        self.preview_panel = None
         self.dirty = False
         self.training = QProcess(self)
         self.training.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.training.readyReadStandardOutput.connect(self.read_training_log)
         self.training.finished.connect(self.training_finished)
         self.training.errorOccurred.connect(self.training_error)
         self.player = QMediaPlayer(self)
@@ -75,11 +77,16 @@ class AnnotationWindow(QMainWindow):
         self.save_button = self.tool(QStyle.StandardPixmap.SP_DialogSaveButton, "Save annotation")
         self.save_button.clicked.connect(self.save_annotation)
         header.addWidget(self.save_button)
-        preview_button = QPushButton("Preview")
-        preview_button.setToolTip("Open video inference preview")
-        preview_button.clicked.connect(self.open_preview)
-        header.addWidget(preview_button)
+        self.preview_button = QPushButton("Preview")
+        self.preview_button.clicked.connect(self.open_preview)
+        header.addWidget(self.preview_button)
         layout.addLayout(header)
+        self.workspace = QStackedWidget()
+        layout.addWidget(self.workspace, 1)
+        self.annotation_page = QWidget()
+        self.workspace.addWidget(self.annotation_page)
+        layout = QVBoxLayout(self.annotation_page)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.preview, 5)
 
         playback = QHBoxLayout()
@@ -141,11 +148,25 @@ class AnnotationWindow(QMainWindow):
         self.refresh_videos()
 
     def open_preview(self) -> None:
-        """Open the standalone inference window while keeping annotation state."""
-        from app.preview import PreviewWindow
+        """Switch between annotation and recognition in the same workspace."""
+        from app.preview import PreviewPanel
 
-        self.preview_window = PreviewWindow(self)
-        self.preview_window.show()
+        if self.preview_panel is not None and self.workspace.currentWidget() is self.preview_panel:
+            self.preview_panel.stop()
+            self.workspace.setCurrentWidget(self.annotation_page)
+            self.preview_button.setText("Preview")
+            self.save_button.show()
+            return
+        self.player.pause()
+        if self.preview_panel is None:
+            self.preview_panel = PreviewPanel()
+            self.workspace.addWidget(self.preview_panel)
+        self.preview_panel.open_video(self.video_choice.currentData())
+        if self.player.duration() > 0:
+            self.preview_panel.progress.setMaximum(self.player.duration() - 1)
+        self.workspace.setCurrentWidget(self.preview_panel)
+        self.preview_button.setText("Train")
+        self.save_button.hide()
 
     def tool(self, icon: QStyle.StandardPixmap, tooltip: str) -> QToolButton:
         button = QToolButton()
@@ -189,6 +210,8 @@ class AnnotationWindow(QMainWindow):
         self.timeline.anchor = None
         self.refresh_intervals()
         video = self.video_choice.itemData(index)
+        if self.preview_panel is not None:
+            self.preview_panel.open_video(video)
         if video is None:
             self.status.setText("No videos in app/data/video")
             self.player.setSource(QUrl())
@@ -353,6 +376,10 @@ class AnnotationWindow(QMainWindow):
             self.training.kill()
             self.training.waitForFinished(5000)
         self.player.stop()
+        if self.preview_panel is not None and not self.preview_panel.close():
+            self.status.setText("Preview 正在释放资源，请稍后关闭主窗口")
+            event.ignore()
+            return
         event.accept()
 
 

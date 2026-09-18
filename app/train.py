@@ -13,13 +13,13 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from action_detection.logging import configure_logging
 from action_detection.pose import HandPose
-from action_detection.setting import CLIP_LENGTH, CONFIG_PATH, HAND_SELECTION, SAMPLE_FPS
+from action_detection.setting import CLIP_LENGTH, CONFIG_PATH, POSE_FEATURE_VERSION, SAMPLE_FPS
 from action_detection.temporal import load_temporal_model
 from app.annotation import FEATURE_DIR, MODEL_DIR, TEMP_DIR, VIDEO_DIR, VIDEO_SUFFIXES, Annotation
 
 LOGGER = logging.getLogger(__name__)
 BATCH_SIZE = 16
-FEATURE_VERSION = f"annotation-{HAND_SELECTION}-v2"
+FEATURE_VERSION = f"annotation-{POSE_FEATURE_VERSION}"
 
 
 def extract_features(annotation: Annotation, pose: HandPose) -> tuple[np.ndarray, np.ndarray]:
