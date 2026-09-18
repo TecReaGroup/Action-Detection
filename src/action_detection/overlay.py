@@ -23,7 +23,7 @@ def draw_confidence_card(painter: QPainter, bounds: QRectF, confidence: float | 
     font.setWeight(QFont.Weight.Normal)
     painter.setFont(font)
     value = 0.0 if confidence is None else max(0.0, min(1.0, confidence))
-    color = QColor("#46d99b" if value >= 0.8 else "#f2c94c" if value >= 0.6 else "#d1d5db")
+    color = QColor("#46d99b" if value >= 0.7 else "#f2c94c" if value >= 0.5 else "#d1d5db")
     painter.setPen(color)
     text = f"置信率：{value:.1%}" if confidence is not None else "置信率：—"
     painter.drawText(QRectF(left, card.y() + 44, width, 21), Qt.AlignmentFlag.AlignVCenter, text)
