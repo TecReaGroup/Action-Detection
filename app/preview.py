@@ -10,11 +10,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from PySide6.QtCore import QRect, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QRect, QRectF, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QCloseEvent, QImage, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from action_detection.pose import HandPose
+from action_detection.overlay import draw_confidence_card
 from action_detection.render import draw_hand_skeleton
 from action_detection.setting import (
     ACTION_THRESHOLD, CLIP_LENGTH,
@@ -206,18 +207,10 @@ class VideoCanvas(QWidget):
             target = QRect((self.width() - size.width()) // 2,
                            (self.height() - size.height()) // 2, size.width(), size.height())
             painter.drawImage(target, self.image)
-        text = self.caption
-        color = QColor("white")
-        if self.confidence is not None:
-            text += f"  |  Confidence: {self.confidence:.1%}"
-            color = QColor("#48d597" if self.confidence > 0.8 else
-                           "#f0c94b" if self.confidence > 0.6 else "white")
-        metrics = painter.fontMetrics()
-        text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, self.width() - 48)
-        painter.fillRect(12, 12, metrics.horizontalAdvance(text) + 24,
-                         metrics.height() + 16, QColor(0, 0, 0, 190))
-        painter.setPen(color)
-        painter.drawText(24, 20 + metrics.ascent(), text)
+        draw_confidence_card(painter, QRectF(self.rect()), self.confidence)
+        if self.confidence is None:
+            painter.setPen(QColor("#d1d5db"))
+            painter.drawText(32, 160, self.caption)
         painter.end()
 
 

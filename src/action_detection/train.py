@@ -1,6 +1,5 @@
 """Extract video features and train the binary hand action classifier."""
 
-import hashlib
 import logging
 from pathlib import Path
 
@@ -11,22 +10,19 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from .pose import HandPose
-from .setting import CLIP_LENGTH, FEATURE_DIR, NEGATIVE_DIR, POSE_FEATURE_VERSION, SAMPLE_FPS, TRAIN_DIR
+from .setting import CLIP_LENGTH, NEGATIVE_DIR, POSE_FEATURE_VERSION, TRAIN_DIR
 from .temporal import load_temporal_model
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
 FEATURE_VERSION = POSE_FEATURE_VERSION
 TRAIN_FRACTION = 0.8
+SPLIT_SEED = 42
 
 
 def extract_video(video: Path, pose: HandPose) -> np.ndarray:
-    """Sample a video on the same fixed clock used for live inference."""
-    signature = f"{FEATURE_VERSION}:{video.resolve()}:{video.stat().st_size}:{video.stat().st_mtime_ns}"
-    cache = FEATURE_DIR / (hashlib.sha256(signature.encode()).hexdigest() + ".npz")
-    if cache.exists():
-        with np.load(cache) as stored:
-            return stored["feature"]
+    """Extract pose features from every decoded video frame."""
+    LOGGER.info("Extracting pose from every video frame: %s", video)
     capture = cv2.VideoCapture(str(video))
     pose.reset()
     try:
@@ -37,33 +33,27 @@ def extract_video(video: Path, pose: HandPose) -> np.ndarray:
             raise ValueError(f"Invalid video frame rate: {video}")
         frames = []
         index = 0
-        next_sample = 0.0
         while True:
             available, image = capture.read()
             if not available:
                 break
             timestamp = index / fps
             index += 1
-            if timestamp + 1e-6 < next_sample:
-                continue
             _, _, feature = pose.extract(image, timestamp)
-            while next_sample <= timestamp + 1e-6:
-                frames.append(feature)
-                next_sample += 1 / SAMPLE_FPS
+            frames.append(feature)
         if not frames:
             raise ValueError(f"Training video has no frames: {video}")
         sequence = np.stack(frames, axis=1)
-        np.savez_compressed(cache, feature=sequence)
-        LOGGER.info("Extracted %s: %d sampled frames", video.name, sequence.shape[1])
+        LOGGER.info("Extracted %s: %d source frames source_fps=%.3f", video, sequence.shape[1], fps)
         return sequence
     finally:
         capture.release()
 
 
 def video_clips(sequence: np.ndarray) -> list[np.ndarray]:
-    """Keep complete windows including partial and missing hand observations."""
+    """Keep non-overlapping complete windows, including missing hand observations."""
     clips = []
-    for start in range(0, sequence.shape[1] - CLIP_LENGTH + 1, CLIP_LENGTH // 4):
+    for start in range(0, sequence.shape[1] - CLIP_LENGTH + 1, CLIP_LENGTH):
         clip = sequence[:, start:start + CLIP_LENGTH].copy()
         clips.append(clip)
     return clips
@@ -94,37 +84,31 @@ def find_videos(folder: Path) -> list[Path]:
 def extract_class_clips(
     videos: list[Path], pose: HandPose,
 ) -> tuple[list[np.ndarray], list[np.ndarray], str]:
-    """Split usable videos before combining their overlapping clips."""
-    usable = []
+    """Pool all clips in a class and randomly split them into train and holdout."""
+    class_clips = []
     for video in videos:
         clips = video_clips(extract_video(video, pose))
-        LOGGER.info("%s: %d usable clips", video, len(clips))
-        if clips:
-            usable.append((video, clips))
-        else:
-            LOGGER.warning("Skipping video without a complete visible-hand clip: %s", video)
-    if not usable:
+        LOGGER.info("%s: %d non-overlapping clips window_frames=%d stride_frames=%d", video, len(clips), CLIP_LENGTH, CLIP_LENGTH)
+        class_clips.extend((video, clip) for clip in clips)
+        if not clips:
+            LOGGER.warning("Skipping video without a complete clip: %s", video)
+    if not class_clips:
         raise ValueError(f"No usable hand clips found: {videos[0].parent}")
-    if len(usable) == 1:
-        video, clips = usable[0]
-        sequence = extract_video(video, pose)
-        length = sequence.shape[1]
-        if length >= 2 * CLIP_LENGTH:
-            boundary = min(max(int(length * TRAIN_FRACTION), CLIP_LENGTH), length - CLIP_LENGTH)
-            training_clips = video_clips(sequence[:, :boundary])
-            holdout_clips = video_clips(sequence[:, boundary:])
-            if training_clips and holdout_clips:
-                LOGGER.warning(
-                    "Single-video temporal split: %s; train=[0,%d), holdout=[%d,%d). "
-                    "No shared frames; validation is not independent of the recording.",
-                    video, boundary, boundary, length,
-                )
-                return training_clips, holdout_clips, f"{video} frames [{boundary},{length})"
-        LOGGER.warning("Using all clips for training; no usable temporal holdout: %s", video)
-        return clips, [], "unavailable"
-    holdout_video, holdout_clips = usable[-1]
-    training_clips = [clip for _, clips in usable[:-1] for clip in clips]
-    return training_clips, holdout_clips, str(holdout_video)
+    shuffled_indices = np.random.default_rng(SPLIT_SEED).permutation(len(class_clips))
+    training_count = max(1, int(len(class_clips) * TRAIN_FRACTION))
+    training_clips = [class_clips[index][1] for index in shuffled_indices[:training_count]]
+    holdout_indices = shuffled_indices[training_count:]
+    holdout_clips = [class_clips[index][1] for index in holdout_indices]
+    holdout_videos = sorted({str(class_clips[index][0]) for index in holdout_indices})
+    LOGGER.info(
+        "Class clip split %s: seed=%d total_clips=%d "
+        "train_clips=%d holdout_clips=%d target_train_fraction=%.2f",
+        videos[0].parent, SPLIT_SEED, len(class_clips),
+        len(training_clips), len(holdout_clips), TRAIN_FRACTION,
+    )
+    if not holdout_clips:
+        LOGGER.warning("Only one clip available; no holdout for class: %s", videos[0].parent)
+    return training_clips, holdout_clips, "; ".join(holdout_videos) or "unavailable"
 
 
 def train_model(action: str, epochs: int, batch_size: int) -> None:
@@ -135,7 +119,7 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     temporal = load_temporal_model()
     positive_videos = find_videos(TRAIN_DIR / action)
     negative_videos = find_videos(NEGATIVE_DIR)
-    FEATURE_DIR.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Training sources: positive_videos=%d negative_videos=%d", len(positive_videos), len(negative_videos))
     pose = HandPose()
     positive_train, positive_holdout, positive_video = extract_class_clips(positive_videos, pose)
     negative_train, negative_holdout, negative_video = extract_class_clips(negative_videos, pose)
@@ -191,10 +175,13 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
             checkpoint = {
                 "version": 2, "state_dict": network.state_dict(), "action": action,
                 "temporal_model": temporal.name, "clip_length": CLIP_LENGTH,
-                "sample_fps": SAMPLE_FPS, "feature_version": FEATURE_VERSION,
+                "frame_sampling": "source_frames", "feature_version": FEATURE_VERSION,
                 "synthetic_negative": False,
                 "negative_directory": str(NEGATIVE_DIR),
                 "holdout_video": [str(positive_video), str(negative_video)],
+                "split_strategy": "stratified_random_clip",
+                "split_seed": SPLIT_SEED,
+                "train_fraction": TRAIN_FRACTION,
                 "holdout_loss": best_loss if len(validation_y) else None,
                 "complete_holdout": complete_holdout,
                 "checkpoint_selection": "holdout_loss" if complete_holdout else "final_epoch",

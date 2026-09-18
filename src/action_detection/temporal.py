@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 
 from .model import ContinualSTGCN
-from .setting import CLIP_LENGTH, CONFIG_PATH, MODEL_DIR, SAMPLE_FPS
+from .setting import CLIP_LENGTH, CONFIG_PATH, MODEL_DIR
 from .skeleton_agent import SkeletonAgentMSTCN
 from .sketch import Sketch2D
 
@@ -55,7 +55,7 @@ def load_temporal_model() -> TemporalModel:
     device = torch.device(device_name)
     logging.getLogger(__name__).info("Temporal device=%s", device)
     logging.getLogger(__name__).info(
-        "Temporal model=%s checkpoint=%s window_frames=%d window_seconds=%.2f",
-        name, checkpoint_path, CLIP_LENGTH, CLIP_LENGTH / SAMPLE_FPS,
+        "Temporal model=%s checkpoint=%s window_frames=%d",
+        name, checkpoint_path, CLIP_LENGTH,
     )
     return TemporalModel(name, MODEL_TYPES[name], checkpoint_path, device)

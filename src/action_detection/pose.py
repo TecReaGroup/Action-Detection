@@ -12,6 +12,7 @@ import numpy as np
 import onnxruntime as ort
 from rtmlib import RTMPose, Wholebody, YOLOX
 
+from .smoothing import OneEuroFilter
 from .setting import (
     CONFIG_PATH,
     FEATURE_JOINT_COUNT,
@@ -22,6 +23,9 @@ from .setting import (
     RIGHT_HAND_START,
     MODEL_DIR,
     ROOT,
+    ONE_EURO_MIN_CUTOFF,
+    ONE_EURO_BETA,
+    ONE_EURO_DERIVATIVE_CUTOFF,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -89,6 +93,10 @@ class HandPose:
         self.hand = hand
         self.reset()
         LOGGER.info("Pose hand=%s", hand)
+        LOGGER.info(
+            "Hand One Euro min_cutoff=%.2f beta=%.3f derivative_cutoff=%.2f velocity_unit=pixel/s",
+            ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF,
+        )
         providers = self.estimator.session.get_providers()
         if device == "cuda" and "CUDAExecutionProvider" not in providers:
             LOGGER.error("RTMW CUDA initialization failed; active providers=%s", providers)
@@ -101,6 +109,7 @@ class HandPose:
     def reset(self) -> None:
         """Start an independent video or seek without carrying previous landmarks."""
         self.previous_timestamp: float | None = None
+        self.smoother = OneEuroFilter()
         self.observed_at: float | None = None
         self.sample_count = 0
         self.full_frame_count = 0
@@ -108,7 +117,7 @@ class HandPose:
         self.observation_count = 0
 
     def extract(self, frame: np.ndarray, timestamp: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return observed hand pixels and features at an increasing source time in seconds."""
+        """Return smoothed hand pixels and features at an increasing source time in seconds."""
         if not np.isfinite(timestamp) or (
             self.previous_timestamp is not None and timestamp <= self.previous_timestamp
         ):
@@ -138,6 +147,7 @@ class HandPose:
             valid = np.isfinite(scores) & np.isfinite(points).all(axis=1)
             scores[~valid] = 0
             points[~valid] = 0
+        points = self.smoother.update(points, scores, timestamp)
         features = self.normalize(points, scores)
         if np.any(features[2]):
             self.observed_at = timestamp
