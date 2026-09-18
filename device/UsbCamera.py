@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""OpenCV driver for Logitech and other standard USB cameras."""
+"""OpenCV driver for standard USB cameras."""
 
 import queue
 import threading
@@ -8,7 +8,7 @@ import time
 import cv2
 
 
-class _LogiCompatibilityHelper:
+class _CameraHandleValidator:
     """Provide the handle validation API used by the sampling controller."""
 
     @staticmethod
@@ -19,8 +19,8 @@ class _LogiCompatibilityHelper:
             return False
 
 
-class LogiCamera:
-    """Camera adapter for Logitech cameras accessed through OpenCV."""
+class UsbCamera:
+    """Camera adapter for standard USB cameras accessed through OpenCV."""
 
     def __init__(self, cameraConfig):
         self.cameraConfig = cameraConfig
@@ -29,7 +29,7 @@ class LogiCamera:
             camera_index = int(self.deviceId)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "logi camera deviceId must be a camera index such as 0 or 1"
+                "USB camera deviceId must be a camera index such as 0 or 1"
             ) from exc
 
         self.cameraId = str(camera_index)
@@ -56,13 +56,13 @@ class LogiCamera:
 
         if self.cap is None:
             raise RuntimeError(
-                f"无法打开Logi摄像头索引: {camera_index}，尝试后端: "
+                f"无法打开USB摄像头索引: {camera_index}，尝试后端: "
                 f"{', '.join(name for name, _ in backend_candidates)}"
             )
 
         self._configureCapture()
         self.handle = self.cap
-        self.cl = _LogiCompatibilityHelper()
+        self.cl = _CameraHandleValidator()
         self.backend = opened_backend
 
         self.thread = threading.Thread(target=self._videoThread, daemon=True)

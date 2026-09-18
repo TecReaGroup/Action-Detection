@@ -68,13 +68,13 @@ class RecognitionThread(QThread):
             pose = HandPose()
             if self.isInterruptionRequested():
                 return
-            driver_path = ROOT / "device" / "LogiCamera.py"
-            specification = importlib.util.spec_from_file_location("logi_camera", driver_path)
+            driver_path = ROOT / "device" / "UsbCamera.py"
+            specification = importlib.util.spec_from_file_location("usb_camera", driver_path)
             if specification is None or specification.loader is None:
                 raise RuntimeError(f"Cannot load camera driver: {driver_path}")
             driver = importlib.util.module_from_spec(specification)
             specification.loader.exec_module(driver)
-            camera = driver.LogiCamera({
+            camera = driver.UsbCamera({
                 "deviceId": self.camera_index, "colorImageSizeX": 1280,
                 "colorImageSizeY": 720, "fps": 30, "frameInterval": 0.01,
             })
