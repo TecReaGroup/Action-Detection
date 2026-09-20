@@ -1,6 +1,6 @@
 [pose]
 # Options: "left", "right", "both"; "both" uses 42 keypoints.
-hand = "left"
+hand = "right"
 # Options: "cpu", "cuda"
 device = "cuda"
 # Options: "lightweight", "balanced", "performance"

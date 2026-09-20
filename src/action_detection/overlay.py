@@ -18,7 +18,7 @@ def draw_confidence_card(painter: QPainter, bounds: QRectF, confidence: float | 
     font.setWeight(QFont.Weight.DemiBold)
     painter.setFont(font)
     painter.setPen(QColor("#f4f6fa"))
-    painter.drawText(QRectF(left, card.y() + 14, width, 24), Qt.AlignmentFlag.AlignVCenter, "目标动作：摇摆大拇指")
+    painter.drawText(QRectF(left, card.y() + 14, width, 24), Qt.AlignmentFlag.AlignVCenter, "目标动作：")
     font.setPixelSize(13)
     font.setWeight(QFont.Weight.Normal)
     painter.setFont(font)
