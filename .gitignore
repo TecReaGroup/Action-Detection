@@ -36,6 +36,7 @@ Thumbs.db
 *.log
 temp/*
 !temp/.gitkeep
+package/
 
 # Keep directory placeholders if they are added to the repository.
 !data/**/.gitkeep
