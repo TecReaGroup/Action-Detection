@@ -1,14 +1,14 @@
 [pose]
 # Options: "left", "right", "both"; "both" uses 42 keypoints.
-hand = "right"
+hand = "left"
 # Options: "cpu", "cuda"
 device = "cuda"
 # Options: "lightweight", "balanced", "performance"
 model_size = "balanced"
 
 [temporal]
-# Options: ["continual_stgcn", "skeleton_agent_mstcn", "sketch_2d"]
-model = "continual_stgcn"
+# Options: ["continual_stgcn", "hypergcn", "stgcnpp", "skeleton_agent_mstcn", "sketch_2d"]
+model = "hypergcn"
 
 [train]
 # Options: integers >= 13; sampled frames at 10 FPS, shared by training and recognition.

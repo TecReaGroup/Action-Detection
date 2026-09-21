@@ -1,7 +1,13 @@
 """Extract video features and train the binary hand action classifier."""
 
+import hashlib
+import json
 import logging
+import tomllib
+import zipfile
+from importlib.metadata import version
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import cv2
 import numpy as np
@@ -10,7 +16,10 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from .pose import HandPose
-from .setting import CLIP_LENGTH, NEGATIVE_DIR, POSE_FEATURE_VERSION, TRAIN_DIR
+from .setting import (
+    CLIP_LENGTH, CONFIG_PATH, FEATURE_DIR, FEATURE_JOINT_COUNT, MODEL_DIR,
+    NEGATIVE_DIR, POSE_FEATURE_VERSION, ROOT, TRAIN_DIR,
+)
 from .temporal import load_temporal_model
 
 LOGGER = logging.getLogger(__name__)
@@ -18,6 +27,71 @@ VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}
 FEATURE_VERSION = POSE_FEATURE_VERSION
 TRAIN_FRACTION = 0.8
 SPLIT_SEED = 42
+
+
+class VideoPoseCache:
+    """Reuse source-frame features and initialize RTMLib only on a cache miss."""
+
+    def __init__(self) -> None:
+        with CONFIG_PATH.open("rb") as stream:
+            pose_configuration = tomllib.load(stream)["pose"]
+        extraction_source = hashlib.sha256()
+        for filename in ("pose.py", "smoothing.py", "setting.py", "train.py"):
+            extraction_source.update(Path(__file__).with_name(filename).read_bytes())
+        self.signature = json.dumps({
+            "format": "source-frames-v1",
+            "feature_version": FEATURE_VERSION,
+            "pose": pose_configuration,
+            "source": extraction_source.hexdigest(),
+            "package": {name: version(name) for name in (
+                "rtmlib", "onnxruntime-gpu", "opencv-contrib-python",
+            )},
+        }, sort_keys=True)
+        self.pose: HandPose | None = None
+
+    def cache_path(self, video: Path) -> Path:
+        """Identify the source video, preprocessing and local ONNX weights."""
+        stat = video.stat()
+        model_signature = [
+            (path.name, path.stat().st_size, path.stat().st_mtime_ns)
+            for path in sorted(MODEL_DIR.glob("*.onnx"))
+        ]
+        identity = f"{self.signature}:{video.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{model_signature}"
+        return FEATURE_DIR / f"{hashlib.sha256(identity.encode()).hexdigest()}.npz"
+
+    def extract(self, video: Path) -> np.ndarray:
+        """Load validated features or atomically cache a fresh video extraction."""
+        cache = self.cache_path(video)
+        if cache.exists():
+            try:
+                with np.load(cache, allow_pickle=False) as stored:
+                    sequence = stored["feature"]
+                if (sequence.ndim != 3 or sequence.shape[0] != 3
+                        or sequence.shape[1] == 0 or sequence.shape[2] != FEATURE_JOINT_COUNT
+                        or sequence.dtype != np.float32 or not np.isfinite(sequence).all()):
+                    raise ValueError("Invalid cached feature shape, dtype or values")
+                LOGGER.info("Pose cache hit: %s frames=%d", video, sequence.shape[1])
+                return sequence
+            except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile) as error:
+                LOGGER.warning("Pose cache unreadable; extracting again: %s error=%s", cache, error)
+        LOGGER.info("Pose cache miss: %s", video)
+        if self.pose is None:
+            self.pose = HandPose()
+            # First initialization may download the ONNX weights used in the cache identity.
+            cache = self.cache_path(video)
+        sequence = extract_video(video, self.pose)
+        FEATURE_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = ROOT / "temp"
+        temporary.mkdir(exist_ok=True)
+        with NamedTemporaryFile(dir=temporary, suffix=".npz", delete=False) as stream:
+            partial = Path(stream.name)
+        try:
+            np.savez_compressed(partial, feature=sequence)
+            partial.replace(cache)
+        finally:
+            partial.unlink(missing_ok=True)
+        LOGGER.info("Pose cache saved: %s", cache)
+        return sequence
 
 
 def extract_video(video: Path, pose: HandPose) -> np.ndarray:
@@ -82,12 +156,12 @@ def find_videos(folder: Path) -> list[Path]:
 
 
 def extract_class_clips(
-    videos: list[Path], pose: HandPose,
+    videos: list[Path], pose: VideoPoseCache,
 ) -> tuple[list[np.ndarray], list[np.ndarray], str]:
     """Pool all clips in a class and randomly split them into train and holdout."""
     class_clips = []
     for video in videos:
-        clips = video_clips(extract_video(video, pose))
+        clips = video_clips(pose.extract(video))
         LOGGER.info("%s: %d non-overlapping clips window_frames=%d stride_frames=%d", video, len(clips), CLIP_LENGTH, CLIP_LENGTH)
         class_clips.extend((video, clip) for clip in clips)
         if not clips:
@@ -120,9 +194,10 @@ def train_model(action: str, epochs: int, batch_size: int) -> None:
     positive_videos = find_videos(TRAIN_DIR / action)
     negative_videos = find_videos(NEGATIVE_DIR)
     LOGGER.info("Training sources: positive_videos=%d negative_videos=%d", len(positive_videos), len(negative_videos))
-    pose = HandPose()
+    pose = VideoPoseCache()
     positive_train, positive_holdout, positive_video = extract_class_clips(positive_videos, pose)
     negative_train, negative_holdout, negative_video = extract_class_clips(negative_videos, pose)
+    del pose
     train_x, train_y = build_examples(positive_train, negative_train)
     complete_holdout = bool(positive_holdout and negative_holdout)
     validation_x, validation_y = (

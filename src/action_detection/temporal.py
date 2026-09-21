@@ -8,12 +8,16 @@ from pathlib import Path
 import torch
 
 from .model import ContinualSTGCN
+from .hypergcn import HyperGCN
 from .setting import CLIP_LENGTH, CONFIG_PATH, MODEL_DIR
 from .skeleton_agent import SkeletonAgentMSTCN
 from .sketch import Sketch2D
+from .stgcnpp import STGCNPlusPlus
 
 MODEL_TYPES = {
     "continual_stgcn": ContinualSTGCN,
+    "hypergcn": HyperGCN,
+    "stgcnpp": STGCNPlusPlus,
     "skeleton_agent_mstcn": SkeletonAgentMSTCN,
     "sketch_2d": Sketch2D,
 }
@@ -24,11 +28,16 @@ class TemporalModel:
     """Bind a validated model constructor to its distinct checkpoint path."""
 
     name: str
-    network_type: type[ContinualSTGCN] | type[SkeletonAgentMSTCN] | type[Sketch2D]
+    network_type: (
+        type[ContinualSTGCN] | type[HyperGCN] | type[SkeletonAgentMSTCN]
+        | type[Sketch2D] | type[STGCNPlusPlus]
+    )
     checkpoint_path: Path
     device: torch.device
 
-    def create_training_network(self) -> ContinualSTGCN | SkeletonAgentMSTCN | Sketch2D:
+    def create_training_network(
+        self,
+    ) -> ContinualSTGCN | HyperGCN | SkeletonAgentMSTCN | Sketch2D | STGCNPlusPlus:
         """Initialize training weights required by the selected architecture."""
         network = self.network_type()
         if isinstance(network, Sketch2D):
